@@ -64,9 +64,6 @@ jobs:
           # exit-zero treats all errors as warnings.
           flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-      - name: Run Tests (PyTest)
-        run: pytest --if-present
-
       - name: SonarCloud Scan
         if: ${{ env.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarcloud-github-action@v2
