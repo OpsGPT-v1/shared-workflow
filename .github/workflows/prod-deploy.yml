@@ -82,9 +82,11 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Log in to ACR
-        uses: azure/docker-login@v2
-        with:
-          login-server: ${{ inputs.acr_login_server }}
+        run: |
+          REGISTRY_NAME=$(echo "${{ inputs.acr_login_server }}" | cut -d'.' -f1)
+          ACR_TOKEN=$(az acr login --name $REGISTRY_NAME --expose-token --output tsv --query accessToken)
+          echo "::add-mask::$ACR_TOKEN"
+          echo $ACR_TOKEN | docker login ${{ inputs.acr_login_server }} --username 00000000-0000-0000-0000-000000000000 --password-stdin
 
       - name: Pull existing Dev Image (built from commit SHA)
         run: |
