@@ -62,17 +62,25 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          # Fetches full history to ensure tags can be resolved down to commit SHAs
+          fetch-depth: 0 
 
-      - name: Determine Tags
+      - name: Determine Tags and Target Commit SHA
         id: vars
         run: |
-          # Use provided release_tag or default to github.ref_name (e.g., v2.1.0)
+          # 1. Resolve production release tag string
           TAG="${{ inputs.release_tag }}"
           if [ -z "$TAG" ]; then
             TAG="${{ github.ref_name }}"
           fi
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Resolved production release tag: $TAG"
+
+          # 2. Extract the actual git commit SHA that this tag/workflow points to
+          REAL_COMMIT_SHA=$(git rev-parse HEAD)
+          echo "commit_sha=$REAL_COMMIT_SHA" >> $GITHUB_OUTPUT
+          echo "Resolved real Git Commit SHA for image pull: $REAL_COMMIT_SHA"
 
       - name: Log in to Azure (OIDC)
         uses: azure/login@v2
@@ -88,13 +96,15 @@ jobs:
           echo "::add-mask::$ACR_TOKEN"
           echo $ACR_TOKEN | docker login ${{ inputs.acr_login_server }} --username 00000000-0000-0000-0000-000000000000 --password-stdin
 
+      # FIX: Changed from github.sha to steps.vars.outputs.commit_sha
       - name: Pull existing Dev Image (built from commit SHA)
         run: |
-          docker pull ${{ inputs.acr_login_server }}/${{ inputs.image_name }}:${{ github.sha }}
+          docker pull ${{ inputs.acr_login_server }}/${{ inputs.image_name }}:${{ steps.vars.outputs.commit_sha }}
 
+      # FIX: Changed source tag from github.sha to steps.vars.outputs.commit_sha
       - name: Retag Image with Release Version
         run: |
-          docker tag ${{ inputs.acr_login_server }}/${{ inputs.image_name }}:${{ github.sha }} \
+          docker tag ${{ inputs.acr_login_server }}/${{ inputs.image_name }}:${{ steps.vars.outputs.commit_sha }} \
                      ${{ inputs.acr_login_server }}/${{ inputs.image_name }}:${{ steps.vars.outputs.tag }}
 
       - name: Push Promoted Release Image to ACR
