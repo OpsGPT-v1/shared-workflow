@@ -1,0 +1,131 @@
+name: Dev Deploy Template
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: 'Name of the service (e.g. frontend-service)'
+        required: true
+        type: string
+      image_name:
+        description: 'Target ACR image repository (e.g. opsgpt/frontend-service)'
+        required: true
+        type: string
+      dockerfile_path:
+        description: 'Path to Dockerfile'
+        required: false
+        default: 'Dockerfile'
+        type: string
+      context_path:
+        description: 'Path to build context'
+        required: false
+        default: '.'
+        type: string
+      gitops_repo:
+        description: 'Target GitOps repository (e.g. owner/opsgpt-gitops)'
+        required: true
+        type: string
+      gitops_branch:
+        description: 'Target GitOps repository branch'
+        required: false
+        default: 'main'
+        type: string
+      values_file_path:
+        description: 'Path to values-dev.yaml in GitOps repo'
+        required: false
+        default: 'helm/opsgpt/values-dev.yaml'
+        type: string
+      yaml_image_tag_path:
+        description: 'yq path to update the image tag (e.g. .services.frontend-service.image.tag)'
+        required: true
+        type: string
+      acr_login_server:
+        description: 'ACR Login Server (e.g. opsgpt.azurecr.io)'
+        required: true
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        description: 'Azure Managed Identity Client ID for OIDC authentication'
+        required: true
+      AZURE_TENANT_ID:
+        description: 'Azure Tenant ID'
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        description: 'Azure Subscription ID'
+        required: true
+      GITOPS_PAT:
+        description: 'GitHub Personal Access Token for GitOps repo push'
+        required: true
+
+jobs:
+  deploy:
+    name: Build, Scan, Push, GitOps Dev
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Required for Azure OIDC Login
+      contents: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image locally
+        run: |
+          docker build \
+            -t ${{ inputs.acr_login_server }}/${{ inputs.image_name }}:${{ github.sha }} \
+            -f ${{ inputs.dockerfile_path }} \
+            ${{ inputs.context_path }}
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ inputs.acr_login_server }}/${{ inputs.image_name }}:${{ github.sha }}'
+          format: 'table'
+          exit-code: '0' # Run scan but let the pipeline proceed (or set to 1 if strict validation is desired)
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Log in to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ inputs.acr_login_server }}
+
+      - name: Push Image to ACR
+        run: docker push ${{ inputs.acr_login_server }}/${{ inputs.image_name }}:${{ github.sha }}
+
+      - name: Checkout GitOps Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.gitops_repo }}
+          token: ${{ secrets.GITOPS_PAT }}
+          ref: ${{ inputs.gitops_branch }}
+          path: gitops-repo
+
+      - name: Update values-dev.yaml with yq
+        run: |
+          cd gitops-repo
+          yq -i '${{ inputs.yaml_image_tag_path }} = "${{ github.sha }}"' ${{ inputs.values_file_path }}
+
+      - name: Commit and Push to GitOps Repo
+        run: |
+          cd gitops-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ${{ inputs.values_file_path }}
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore(gitops): update ${{ inputs.service_name }} image tag to dev-${{ github.sha }}"
+            git push origin ${{ inputs.gitops_branch }}
+          fi

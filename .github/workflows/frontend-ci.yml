@@ -1,0 +1,78 @@
+name: Frontend CI Template
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: 'Name of the frontend service'
+        required: true
+        type: string
+      node_version:
+        description: 'Node.js version to use'
+        required: false
+        default: '20'
+        type: string
+      working_directory:
+        description: 'Working directory for the build'
+        required: false
+        default: '.'
+        type: string
+    secrets:
+      SONAR_TOKEN:
+        description: 'Token for SonarCloud analysis'
+        required: false
+      SNYK_TOKEN:
+        description: 'Token for Snyk vulnerability scanning'
+        required: false
+
+jobs:
+  ci:
+    name: Lint, Test, Scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required for SonarCloud analysis
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+          cache-dependency-path: '${{ inputs.working_directory }}/package-lock.json'
+
+      - name: Install Dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Run Linting
+        run: npm run lint --if-present
+
+      - name: Run Smoke Tests
+        run: npm run test --if-present
+
+      - name: SonarCloud Scan
+        if: ${{ secrets.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarcloud-github-action@v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          projectBaseDir: ${{ inputs.working_directory }}
+
+      - name: Snyk Security Scan
+        if: ${{ secrets.SNYK_TOKEN != '' }}
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high

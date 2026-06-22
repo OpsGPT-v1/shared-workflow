@@ -1,0 +1,82 @@
+name: Backend CI Template
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: 'Name of the backend service'
+        required: true
+        type: string
+      python_version:
+        description: 'Python version to use'
+        required: false
+        default: '3.11'
+        type: string
+      working_directory:
+        description: 'Working directory for the build'
+        required: false
+        default: '.'
+        type: string
+    secrets:
+      SONAR_TOKEN:
+        description: 'Token for SonarCloud analysis'
+        required: false
+      SNYK_TOKEN:
+        description: 'Token for Snyk vulnerability scanning'
+        required: false
+
+jobs:
+  ci:
+    name: Lint, Test, Scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required for SonarCloud analysis
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+          cache: 'pip'
+          cache-dependency-path: '${{ inputs.working_directory }}/requirements.txt'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      - name: Run Linting (Flake8)
+        run: |
+          # stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # exit-zero treats all errors as warnings.
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Run Tests (PyTest)
+        run: pytest --if-present
+
+      - name: SonarCloud Scan
+        if: ${{ secrets.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarcloud-github-action@v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          projectBaseDir: ${{ inputs.working_directory }}
+
+      - name: Snyk Security Scan
+        if: ${{ secrets.SNYK_TOKEN != '' }}
+        uses: snyk/actions/python@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
