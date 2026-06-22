@@ -29,6 +29,9 @@ jobs:
   ci:
     name: Lint, Test, Scan
     runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
@@ -61,7 +64,7 @@ jobs:
         run: npm run test --if-present
 
       - name: SonarCloud Scan
-        if: ${{ secrets.SONAR_TOKEN != '' }}
+        if: ${{ env.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarcloud-github-action@v2
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -70,7 +73,7 @@ jobs:
           projectBaseDir: ${{ inputs.working_directory }}
 
       - name: Snyk Security Scan
-        if: ${{ secrets.SNYK_TOKEN != '' }}
+        if: ${{ env.SNYK_TOKEN != '' }}
         uses: snyk/actions/node@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
