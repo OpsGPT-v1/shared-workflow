@@ -154,10 +154,14 @@ jobs:
           fi
 
       - name: Send Slack Notification
-        if: always() && secrets.PIPELINE_NOTIFICATION != ''
+        if: always()
         env:
           SLACK_WEBHOOK: ${{ secrets.PIPELINE_NOTIFICATION }}
         run: |
+          if [ -z "$SLACK_WEBHOOK" ]; then
+            echo "Slack Webhook URL is empty. Skipping notification."
+            exit 0
+          fi
           STATUS="${{ job.status }}"
           if [ "$STATUS" = "success" ]; then
             COLOR="#00FF00"
