@@ -56,6 +56,9 @@ on:
       GITOPS_PAT:
         description: 'GitHub Personal Access Token for GitOps repo push'
         required: true
+      PIPELINE_NOTIFICATION:
+        description: 'Slack Webhook URL for pipeline notifications'
+        required: false
 
 jobs:
   deploy:
@@ -131,3 +134,21 @@ jobs:
             git commit -m "chore(gitops): update ${{ inputs.service_name }} image tag to dev-${{ github.sha }}"
             git push origin ${{ inputs.gitops_branch }}
           fi
+
+      - name: Send Slack Notification
+        if: always() && secrets.PIPELINE_NOTIFICATION != ''
+        env:
+          SLACK_WEBHOOK: ${{ secrets.PIPELINE_NOTIFICATION }}
+        run: |
+          STATUS="${{ job.status }}"
+          if [ "$STATUS" = "success" ]; then
+            COLOR="#00FF00"
+            TEXT="Dev deployment for *${{ inputs.service_name }}* succeeded! :white_check_mark:"
+          else
+            COLOR="#FF0000"
+            TEXT="Dev deployment for *${{ inputs.service_name }}* failed! :x:"
+          fi
+          
+          payload="{\"attachments\":[{\"color\":\"$COLOR\",\"title\":\"OpsGPT Dev Deploy Pipeline - $STATUS\",\"title_link\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\",\"text\":\"$TEXT\",\"fields\":[{\"title\":\"Repository\",\"value\":\"<${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>\",\"short\":true},{\"title\":\"Commit\",\"value\":\"<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>\",\"short\":true},{\"title\":\"Triggered By\",\"value\":\"${{ github.actor }}\",\"short\":true}]}]}"
+          
+          curl -s -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"
